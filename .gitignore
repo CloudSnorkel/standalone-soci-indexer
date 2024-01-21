@@ -1,5 +1,3 @@
-functions/packages/
-functions/source/soci-index-generator-lambda/main
-functions/source/soci-index-generator-lambda/*.zip
-taskcat_outputs/
-/*.zip
+dist
+*.exe
+.idea

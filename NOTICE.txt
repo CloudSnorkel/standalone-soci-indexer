@@ -1,2 +1,0 @@
-cfn-ecr-aws-soci-index-builder
-Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. 

@@ -1,0 +1,50 @@
+name: goreleaser
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.21
+
+      - name: Test
+        run: go test ./...
+
+      - name: Dependencies
+        run: |
+          sudo apt install -qy binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          
+          mkdir /tmp/zlib
+          cd /tmp/zlib
+          wget https://www.zlib.net/current/zlib.tar.gz
+          tar xvf zlib.tar.gz
+          cd zlib-*          
+          CC=aarch64-linux-gnu-gcc AR=aarch64-linux-gnu-ar CHOST=arm64 ./configure --static
+          make
+          sudo make install
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot
+          path: dist/*

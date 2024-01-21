@@ -5,6 +5,7 @@ package registry
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/awslabs/soci-snapshotter/soci/store"
 
-	"github.com/aws-ia/cfn-aws-soci-index-builder/soci-index-generator-lambda/utils/log"
+	"github.com/CloudSnorkel/standalone-soci-indexer/utils/log"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -31,6 +32,7 @@ const (
 	MediaTypeDockerManifestList = "application/vnd.docker.distribution.manifest.list.v2+json"
 	MediaTypeDockerManifest     = "application/vnd.docker.distribution.manifest.v2+json"
 	MediaTypeOCIManifest        = "application/vnd.oci.image.manifest.v1+json"
+	MediaTypeOCIIndexManifest   = "application/vnd.oci.image.index.v1+json"
 
 	MediaTypeDockerImageConfig = "application/vnd.docker.container.image.v1+json"
 	MediaTypeOCIImageConfig    = "application/vnd.oci.image.config.v1+json"
@@ -46,13 +48,21 @@ type Registry struct {
 var RegistryNotSupportingOciArtifacts = errors.New("Registry does not support OCI artifacts")
 
 // Initialize a remote registry
-func Init(ctx context.Context, registryUrl string) (*Registry, error) {
+func Init(ctx context.Context, registryUrl string, authToken string) (*Registry, error) {
 	log.Info(ctx, "Initializing registry client")
 	registry, err := remote.NewRegistry(registryUrl)
 	if err != nil {
 		return nil, err
 	}
-	if isEcrRegistry(registryUrl) {
+	if authToken != "" {
+		registry.RepositoryOptions.Client = &auth.Client{
+			Header: http.Header{
+				"Authorization": {"Basic " + base64.StdEncoding.EncodeToString([]byte(authToken))},
+				"User-Agent":    {"Standalone SOCI Index Builder (oras-go)"},
+			},
+		}
+		log.Info(ctx, "Using auth token "+authToken)
+	} else if isEcrRegistry(registryUrl) {
 		err := authorizeEcr(registry)
 		if err != nil {
 			return nil, err
@@ -201,7 +211,7 @@ func authorizeEcr(ecrRegistry *remote.Registry) error {
 	ecrRegistry.RepositoryOptions.Client = &auth.Client{
 		Header: http.Header{
 			"Authorization": {"Basic " + *ecrAuthorizationToken},
-			"User-Agent":    {"SOCI Index Builder (oras-go)"},
+			"User-Agent":    {"Standalone SOCI Index Builder (oras-go)"},
 		},
 	}
 	return nil

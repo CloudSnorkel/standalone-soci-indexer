@@ -7,7 +7,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/aws/aws-lambda-go/lambdacontext"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -18,11 +17,7 @@ type ExpectedResponse struct {
 
 func TestHeadManifest(t *testing.T) {
 	doTest := func(registryUrl string, repository string, digestOrTag string, expected ExpectedResponse) {
-		// making the test context
-		lc := lambdacontext.LambdaContext{}
-		lc.AwsRequestID = "abcd-1234-test-head-manifest"
-		ctx := lambdacontext.NewContext(context.Background(), &lc)
-		registry, err := Init(ctx, registryUrl)
+		registry, err := Init(context.Background(), registryUrl, "")
 		if err != nil {
 			panic(err)
 		}
@@ -32,12 +27,12 @@ func TestHeadManifest(t *testing.T) {
 			panic(err)
 		}
 		if descriptor.MediaType != expected.MediaType {
-			t.Fatalf("Incorrect manifest media type. Expected %s but got %s", expected.MediaType, descriptor.MediaType)
+			t.Fatalf("Incorrect manifest media type for %s/%s:%s. Expected %s but got %s", registryUrl, repository, digestOrTag, expected.MediaType, descriptor.MediaType)
 		}
 	}
 
 	expected := ExpectedResponse{
-		MediaType: MediaTypeDockerManifestList,
+		MediaType: MediaTypeOCIIndexManifest,
 	}
 	doTest("public.ecr.aws", "docker/library/redis", "7", expected)
 
@@ -59,11 +54,7 @@ func TestHeadManifest(t *testing.T) {
 
 func TestGetManifest(t *testing.T) {
 	doTest := func(registryUrl string, repository string, digestOrTag string, expected ExpectedResponse) {
-		// making the test context
-		lc := lambdacontext.LambdaContext{}
-		lc.AwsRequestID = "abcd-1234-test-get-manifest"
-		ctx := lambdacontext.NewContext(context.Background(), &lc)
-		registry, err := Init(ctx, registryUrl)
+		registry, err := Init(context.Background(), registryUrl, "")
 		if err != nil {
 			panic(err)
 		}
@@ -73,16 +64,16 @@ func TestGetManifest(t *testing.T) {
 			panic(err)
 		}
 		if manifest.MediaType != expected.MediaType {
-			t.Fatalf("Incorrect manifest media type. Expected %s but got %s", expected.MediaType, manifest.MediaType)
+			t.Fatalf("Incorrect manifest media type for %s/%s:%s. Expected %s but got %s", registryUrl, repository, digestOrTag, expected.MediaType, manifest.MediaType)
 		}
 
 		if manifest.Config.MediaType != expected.Config.MediaType {
-			t.Fatalf("Incorrect config's media type. Expected %s but got %s", expected.Config.MediaType, manifest.Config.MediaType)
+			t.Fatalf("Incorrect config's media type for %s/%s:%s. Expected %s but got %s", registryUrl, repository, digestOrTag, expected.Config.MediaType, manifest.Config.MediaType)
 		}
 	}
 
 	expected := ExpectedResponse{
-		MediaType: MediaTypeDockerManifestList,
+		MediaType: MediaTypeOCIIndexManifest,
 		Config: ocispec.Descriptor{
 			MediaType: "",
 		},

@@ -7,7 +7,6 @@ package log
 import (
 	"context"
 
-	"github.com/aws/aws-lambda-go/lambdacontext"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -44,7 +43,4 @@ func addContext(ctx context.Context, logEvent *zerolog.Event) {
 			logEvent.Str(contextKey, value.(string))
 		}
 	}
-
-	lambdaCtx, _ := lambdacontext.FromContext(ctx)
-	logEvent.Str("RequestId", lambdaCtx.AwsRequestID)
 }
