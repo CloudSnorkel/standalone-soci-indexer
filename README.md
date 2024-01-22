@@ -14,7 +14,7 @@ Download latest version with:
 
 ```bash
 LATEST_VERSION=`curl -w "%{redirect_url}" -fsS https://github.com/CloudSnorkel/standalone-soci-indexer/releases/latest | grep -oE "[^/]+$"`
-curl -fsSL https://github.com/CloudSnorkel/standalone-soci-indexer/releases/download/v${LATEST_VERSION}/standalone-soci-indexer_Linux_`uname -m`.tar.gz | tar xz
+curl -fsSL https://github.com/CloudSnorkel/standalone-soci-indexer/releases/download/${LATEST_VERSION}/standalone-soci-indexer_Linux_x86_64.tar.gz | tar xz
 ```
 
 Use it to pull an image, index it, and push a SOCI snapshot with:
