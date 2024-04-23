@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/CloudSnorkel/standalone-soci-indexer/utils/log"
-	"github.com/spf13/cobra"
 	"os"
-	"strings"
+
+	"github.com/CloudSnorkel/standalone-soci-indexer/utils/log"
+	parser "github.com/novln/docker-parser"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -21,6 +22,19 @@ var (
 	auth string
 )
 
+func parseImageDesc(desc string) (repo, tag, registry string, err error) {
+	ref, err := parser.Parse(desc)
+	if err != nil {
+		return
+	}
+
+	repo = ref.ShortName()
+	tag = ref.Tag()
+	registry = ref.Registry()
+
+	return
+}
+
 func main() {
 	var rootCmd = &cobra.Command{
 		Use:     "soci-indexer [REGISTRY/]REPO[:TAG]",
@@ -30,32 +44,15 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			var ctx = context.Background()
 
-			var registry string
-			var repo string
-			var tag string
-			var rest string
-
-			splits := strings.SplitN(args[0], "/", 2)
-			if len(splits) == 1 {
-				registry = "docker.io"
-				rest = splits[0]
-			} else {
-				registry = splits[0]
-				rest = splits[1]
-			}
-
-			splits = strings.SplitN(rest, ":", 2)
-			if len(splits) == 1 {
-				repo = splits[0]
-				tag = "latest"
-			} else {
-				repo = splits[0]
-				tag = splits[1]
+			repo, tag, registry, err := parseImageDesc(args[0])
+			if err != nil {
+				log.Error(ctx, "Error parsing image reference: %s", err)
+				os.Exit(1)
 			}
 
 			log.Info(ctx, fmt.Sprintf("Indexing and pushing %s:%s to %s", repo, tag, registry))
 
-			_, err := indexAndPush(ctx, repo, tag, registry, auth)
+			_, err = indexAndPush(ctx, repo, tag, registry, auth)
 			if err != nil {
 				os.Exit(1)
 			}

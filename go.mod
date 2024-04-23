@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-sdk-go v1.50.0
 	github.com/awslabs/soci-snapshotter v0.4.1
 	github.com/containerd/containerd v1.7.12
+	github.com/novln/docker-parser v1.0.0
 	github.com/opencontainers/image-spec v1.1.0-rc6
 	github.com/rs/zerolog v1.31.0
 	github.com/spf13/cobra v1.8.0
