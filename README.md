@@ -23,7 +23,7 @@ Use it to pull an image, index it, and push a SOCI snapshot with:
 ./standalone-soci-indexer 1234567890.dkr.ecr.us-east-1.amazonaws.com/some-repo:latest
 ```
 
-The indexer will automatically use the provided environment AWS credentials to login to ECR. If you need to use a different authentication method, you can use the `--auth` flag to specify a different authentication token.:
+The indexer will automatically use the provided environment AWS credentials to login to ECR. If you need to use a different authentication method, you can use the `--auth` flag to specify a different authentication token:
 
 ```bash
 ./standalone-soci-indexer docker.io/some-repo:latest --auth user:password
