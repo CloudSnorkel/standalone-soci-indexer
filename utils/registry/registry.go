@@ -47,6 +47,12 @@ type Registry struct {
 
 var RegistryNotSupportingOciArtifacts = errors.New("Registry does not support OCI artifacts")
 
+type Manifest struct {
+	ocispec.Manifest
+
+	Manifests []ocispec.Descriptor `json:"manifests"`
+}
+
 // Initialize a remote registry
 func Init(ctx context.Context, registryUrl string, authToken string) (*Registry, error) {
 	log.Info(ctx, "Initializing registry client")
@@ -128,9 +134,9 @@ func (registry *Registry) HeadManifest(ctx context.Context, repositoryName strin
 
 // Call registry's getManifest and return the image's manifest
 // The image reference must be a digest because that's what oras-go FetchReference takes
-func (registry *Registry) GetManifest(ctx context.Context, repositoryName string, digest string) (ocispec.Manifest, error) {
+func (registry *Registry) GetManifest(ctx context.Context, repositoryName string, digest string) (Manifest, error) {
 	repo, err := registry.registry.Repository(ctx, repositoryName)
-	var manifest ocispec.Manifest
+	var manifest Manifest
 	if err != nil {
 		return manifest, err
 	}
@@ -171,6 +177,49 @@ func (registry *Registry) ValidateImageManifest(ctx context.Context, repositoryN
 	}
 
 	return fmt.Errorf("Unexpected config media type: %s, expected one of: %v.", manifest.Config.MediaType, ImageConfigMediaTypes)
+}
+
+// GetImageDigests inspects an image reference and returns all valid digets that need to be indexed.
+// For multi-arch images (docker manifest), that includes all digests mentioned by the manifest.
+// For normal images, it's just the image digest itself.
+func (registry *Registry) GetImageDigests(ctx context.Context, repositoryName string, digest string) (digests []string, err error) {
+	manifest, err := registry.GetManifest(ctx, repositoryName, digest)
+	if err != nil {
+		return
+	}
+
+	if manifest.MediaType == MediaTypeDockerManifestList {
+		// multi-arch iamge
+		for _, internalManifest := range manifest.Manifests {
+			if internalManifest.MediaType == MediaTypeDockerManifest {
+				internalDigest := fmt.Sprintf("%s:%s", internalManifest.Digest.Algorithm().String(), internalManifest.Digest.Encoded())
+				if registry.ValidateImageManifest(ctx, repositoryName, internalDigest) == nil {
+					digests = append(digests, internalDigest)
+				}
+			}
+		}
+
+		if len(digests) == 0 {
+			err = fmt.Errorf("Manifest contains no valid images.")
+		}
+
+		return
+	}
+
+	if manifest.Config.MediaType == "" {
+		err = fmt.Errorf("Empty config media type.")
+		return
+	}
+
+	for _, configMediaType := range ImageConfigMediaTypes {
+		if manifest.Config.MediaType == configMediaType {
+			digests = append(digests, digest)
+			return
+		}
+	}
+
+	err = fmt.Errorf("Unexpected config media type: %s, expected one of: %v.", manifest.Config.MediaType, ImageConfigMediaTypes)
+	return
 }
 
 // Check if a registry is an ECR registry

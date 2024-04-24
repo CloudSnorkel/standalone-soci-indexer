@@ -48,7 +48,7 @@ func indexAndPush(ctx context.Context, repo string, digest string, registryUrl s
 		return logAndReturnError(ctx, "Remote registry initialization error", err)
 	}
 
-	err = registry.ValidateImageManifest(ctx, repo, digest)
+	digests, err := registry.GetImageDigests(ctx, repo, digest)
 	if err != nil {
 		log.Warn(ctx, fmt.Sprintf("Image manifest validation error: %v", err))
 		// Returning a non error to skip retries
@@ -67,32 +67,35 @@ func indexAndPush(ctx context.Context, repo string, digest string, registryUrl s
 		return logAndReturnError(ctx, "OCI storage initialization error", err)
 	}
 
-	desc, err := registry.Pull(ctx, repo, sociStore, digest)
-	if err != nil {
-		return logAndReturnError(ctx, "Image pull error", err)
-	}
-
-	image := images.Image{
-		Name:   repo + "@" + digest,
-		Target: *desc,
-	}
-
-	indexDescriptor, err := buildIndex(ctx, dataDir, sociStore, image)
-	if err != nil {
-		if err.Error() == ErrEmptyIndex.Error() {
-			log.Warn(ctx, SkipPushOnEmptyIndexMessage)
-			return SkipPushOnEmptyIndexMessage, nil
+	for _, digest := range digests {
+		ctx := context.WithValue(ctx, "ImageDigest", digest)
+		desc, err := registry.Pull(ctx, repo, sociStore, digest)
+		if err != nil {
+			return logAndReturnError(ctx, "Image pull error", err)
 		}
-		return logAndReturnError(ctx, BuildFailedMessage, err)
-	}
-	ctx = context.WithValue(ctx, "SOCIIndexDigest", indexDescriptor.Digest.String())
 
-	err = registry.Push(ctx, sociStore, *indexDescriptor, repo)
-	if err != nil {
-		return logAndReturnError(ctx, PushFailedMessage, err)
-	}
+		image := images.Image{
+			Name:   repo + "@" + digest,
+			Target: *desc,
+		}
 
-	log.Info(ctx, BuildAndPushSuccessMessage)
+		indexDescriptor, err := buildIndex(ctx, dataDir, sociStore, image)
+		if err != nil {
+			if err.Error() == ErrEmptyIndex.Error() {
+				log.Warn(ctx, SkipPushOnEmptyIndexMessage)
+				return SkipPushOnEmptyIndexMessage, nil
+			}
+			return logAndReturnError(ctx, BuildFailedMessage, err)
+		}
+		ctx = context.WithValue(ctx, "SOCIIndexDigest", indexDescriptor.Digest.String())
+
+		err = registry.Push(ctx, sociStore, *indexDescriptor, repo)
+		if err != nil {
+			return logAndReturnError(ctx, PushFailedMessage, err)
+		}
+
+		log.Info(ctx, BuildAndPushSuccessMessage)
+	}
 	return BuildAndPushSuccessMessage, nil
 }
 
