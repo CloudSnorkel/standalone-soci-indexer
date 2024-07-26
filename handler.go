@@ -160,14 +160,8 @@ func buildIndex(ctx context.Context, dataDir string, sociStore *store.SociStore,
 		return nil, err
 	}
 
-	// Build the SOCI index
-	index, err := builder.Build(ctx, image)
-	if err != nil {
-		return nil, err
-	}
-
-	// Write the SOCI index to the OCI store
-	err = soci.WriteSociIndex(ctx, index, sociStore, artifactsDb)
+	// Build and push the SOCI index
+	_, err = builder.Build(ctx, image)
 	if err != nil {
 		return nil, err
 	}
