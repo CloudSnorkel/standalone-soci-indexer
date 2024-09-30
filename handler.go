@@ -99,11 +99,11 @@ func indexAndPush(ctx context.Context, repo string, digest string, registryUrl s
 	return BuildAndPushSuccessMessage, nil
 }
 
-// Create a temp directory in /tmp
+// Create a temp directory in /tmp or $TMPDIR
 // The directory is prefixed by the Lambda's request id
 func createTempDir(ctx context.Context) (string, error) {
 	log.Info(ctx, "Creating a directory to store images and SOCI artifacts")
-	tempDir, err := os.MkdirTemp("/tmp", "soci") // The temp dir name is prefixed by the request id
+	tempDir, err := os.MkdirTemp("", "soci") // The temp dir name is prefixed by the request id
 	return tempDir, err
 }
 
