@@ -67,7 +67,7 @@ func Init(ctx context.Context, registryUrl string, authToken string) (*Registry,
 				"User-Agent":    {"Standalone SOCI Index Builder (oras-go)"},
 			},
 		}
-		log.Info(ctx, "Using auth token "+authToken)
+		log.Info(ctx, "Using auth token")
 	} else if isEcrRegistry(registryUrl) {
 		err := authorizeEcr(registry)
 		if err != nil {
