@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/CloudSnorkel/standalone-soci-indexer/utils/log"
 	parser "github.com/novln/docker-parser"
@@ -47,6 +48,16 @@ func main() {
 			repo, tag, registry, err := parseImageDesc(args[0])
 			if err != nil {
 				log.Error(ctx, "Error parsing image reference: %s", err)
+				os.Exit(1)
+			}
+
+			if strings.Contains(tag, ":") {
+				log.Error(ctx, "Tag cannot be a digest", nil)
+				os.Exit(1)
+			}
+
+			if tag == "" {
+				log.Error(ctx, "Tag is required", nil)
 				os.Exit(1)
 			}
 

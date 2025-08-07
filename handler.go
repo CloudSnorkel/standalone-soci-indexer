@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"sort"
 
 	"github.com/CloudSnorkel/standalone-soci-indexer/utils/log"
 	registryutils "github.com/CloudSnorkel/standalone-soci-indexer/utils/registry"
@@ -20,8 +19,6 @@ import (
 	"github.com/awslabs/soci-snapshotter/soci/store"
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/content/local"
-	"github.com/containerd/containerd/platforms"
-
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -40,7 +37,7 @@ const (
 	artifactsDbName    = "artifacts.db"
 )
 
-func indexAndPush(ctx context.Context, repo string, digest string, registryUrl string, authToken string) (string, error) {
+func indexAndPush(ctx context.Context, repo string, tag string, registryUrl string, authToken string) (string, error) {
 	ctx = context.WithValue(ctx, "RegistryURL", registryUrl)
 
 	registry, err := registryutils.Init(ctx, registryUrl, authToken)
@@ -48,7 +45,7 @@ func indexAndPush(ctx context.Context, repo string, digest string, registryUrl s
 		return logAndReturnError(ctx, "Remote registry initialization error", err)
 	}
 
-	digests, err := registry.GetImageDigests(ctx, repo, digest)
+	digests, err := registry.GetImageDigests(ctx, repo, tag)
 	if err != nil {
 		log.Warn(ctx, fmt.Sprintf("Image manifest validation error: %v", err))
 		// Returning a non error to skip retries
@@ -89,7 +86,7 @@ func indexAndPush(ctx context.Context, repo string, digest string, registryUrl s
 		}
 		ctx = context.WithValue(ctx, "SOCIIndexDigest", indexDescriptor.Digest.String())
 
-		err = registry.Push(ctx, sociStore, *indexDescriptor, repo)
+		err = registry.Push(ctx, sociStore, *indexDescriptor, repo, tag)
 		if err != nil {
 			return logAndReturnError(ctx, PushFailedMessage, err)
 		}
@@ -143,7 +140,6 @@ func initSociArtifactsDb(dataDir string) (*soci.ArtifactsDb, error) {
 // Build soci index for an image and returns its ocispec.Descriptor
 func buildIndex(ctx context.Context, dataDir string, sociStore *store.SociStore, image images.Image) (*ocispec.Descriptor, error) {
 	log.Info(ctx, "Building SOCI index")
-	platform := platforms.DefaultSpec() // TODO: make this a user option
 
 	artifactsDb, err := initSociArtifactsDb(dataDir)
 	if err != nil {
@@ -155,31 +151,13 @@ func buildIndex(ctx context.Context, dataDir string, sociStore *store.SociStore,
 		return nil, err
 	}
 
-	builder, err := soci.NewIndexBuilder(containerdStore, sociStore, artifactsDb, soci.WithPlatform(platform))
+	builder, err := soci.NewIndexBuilder(containerdStore, sociStore, soci.WithArtifactsDb(artifactsDb), soci.WithBuildToolIdentifier("github.com/CloudSnorkel/standalone-soci-indexer"))
 	if err != nil {
 		return nil, err
 	}
 
-	// Build and push the SOCI index
-	_, err = builder.Build(ctx, image)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get SOCI indices for the image from the OCI store
-	// TODO: consider making soci's WriteSociIndex to return the descriptor directly
-	indexDescriptorInfos, _, err := soci.GetIndexDescriptorCollection(ctx, containerdStore, artifactsDb, image, []ocispec.Platform{platform})
-	if err != nil {
-		return nil, err
-	}
-	if len(indexDescriptorInfos) == 0 {
-		return nil, errors.New("No SOCI indices found in OCI store")
-	}
-	sort.Slice(indexDescriptorInfos, func(i, j int) bool {
-		return indexDescriptorInfos[i].CreatedAt.Before(indexDescriptorInfos[j].CreatedAt)
-	})
-
-	return &indexDescriptorInfos[len(indexDescriptorInfos)-1].Descriptor, nil
+	index, err := builder.Convert(ctx, image)
+	return index, err
 }
 
 // Log and return error
