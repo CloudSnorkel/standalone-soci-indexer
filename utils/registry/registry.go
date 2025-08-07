@@ -19,9 +19,9 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/awslabs/soci-snapshotter/soci/store"
 
 	"github.com/CloudSnorkel/standalone-soci-indexer/utils/log"
@@ -69,7 +69,7 @@ func Init(ctx context.Context, registryUrl string, authToken string) (*Registry,
 		}
 		log.Info(ctx, "Using auth token")
 	} else if isEcrRegistry(registryUrl) {
-		err := authorizeEcr(registry)
+		err := authorizeEcr(ctx, registry)
 		if err != nil {
 			return nil, err
 		}
@@ -233,17 +233,23 @@ func isEcrRegistry(registryUrl string) bool {
 }
 
 // Authorize ECR registry
-func authorizeEcr(ecrRegistry *remote.Registry) error {
-	// getting ecr auth token
-	input := &ecr.GetAuthorizationTokenInput{}
-	var ecrClient *ecr.ECR
+func authorizeEcr(ctx context.Context, ecrRegistry *remote.Registry) error {
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	var ecrClient *ecr.Client
 	ecrEndpoint := os.Getenv("ECR_ENDPOINT") // set this env var for custom, i.e. non default, aws ecr endpoint
 	if ecrEndpoint != "" {
-		ecrClient = ecr.New(session.New(&aws.Config{Endpoint: aws.String(ecrEndpoint)}))
+		ecrClient = ecr.NewFromConfig(cfg, func(o *ecr.Options) {
+			o.BaseEndpoint = aws.String(ecrEndpoint)
+		})
 	} else {
-		ecrClient = ecr.New(session.New())
+		ecrClient = ecr.NewFromConfig(cfg)
 	}
-	getAuthorizationTokenResponse, err := ecrClient.GetAuthorizationToken(input)
+
+	getAuthorizationTokenResponse, err := ecrClient.GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
 	if err != nil {
 		return err
 	}
