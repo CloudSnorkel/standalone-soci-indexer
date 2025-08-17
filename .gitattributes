@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.go eol=lf
+*.md eol=lf
+*.yml eol=lf
+*.yaml eol=lf
