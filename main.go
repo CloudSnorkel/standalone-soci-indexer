@@ -76,7 +76,7 @@ func main() {
 	}
 
 	rootCmd.Flags().StringVarP(&auth, "auth", "a", "", "Registry authentication token (usually USER:PASSWORD)")
-	rootCmd.Flags().StringVar(&newTag, "new-tag", "", "Push indexed image with this tag")
+	rootCmd.Flags().StringVarP(&newTag, "new-tag", "t", "", "Push indexed image with this tag")
 
 	if err := rootCmd.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
