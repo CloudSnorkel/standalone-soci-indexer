@@ -20,7 +20,8 @@ var (
 )
 
 var (
-	auth string
+	auth   string
+	newTag string
 )
 
 func parseImageDesc(desc string) (repo, tag, registry string, err error) {
@@ -61,9 +62,13 @@ func main() {
 				os.Exit(1)
 			}
 
-			log.Info(ctx, fmt.Sprintf("Indexing and pushing %s:%s to %s", repo, tag, registry))
+			if newTag == "" {
+				newTag = tag
+			}
 
-			_, err = indexAndPush(ctx, repo, tag, registry, auth)
+			log.Info(ctx, fmt.Sprintf("Indexing %s:%s and pushing with tag %s to %s", repo, tag, newTag, registry))
+
+			_, err = indexAndPush(ctx, repo, tag, newTag, registry, auth)
 			if err != nil {
 				os.Exit(1)
 			}
@@ -71,6 +76,7 @@ func main() {
 	}
 
 	rootCmd.Flags().StringVarP(&auth, "auth", "a", "", "Registry authentication token (usually USER:PASSWORD)")
+	rootCmd.Flags().StringVarP(&newTag, "new-tag", "t", "", "Push indexed image with this tag")
 
 	if err := rootCmd.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
