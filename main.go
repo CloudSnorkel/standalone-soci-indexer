@@ -20,8 +20,8 @@ var (
 )
 
 var (
-	auth   string
-	newTag string
+	auth    string
+	newTags []string
 )
 
 func parseImageDesc(desc string) (repo, tag, registry string, err error) {
@@ -52,8 +52,8 @@ func main() {
 				os.Exit(1)
 			}
 
-			if strings.Contains(tag, ":") {
-				log.Error(ctx, "Tag cannot be a digest", nil)
+			if strings.Contains(tag, ":") && len(newTags) == 0 {
+				log.Error(ctx, "Tag cannot be a digest without --new-tag", nil)
 				os.Exit(1)
 			}
 
@@ -62,13 +62,13 @@ func main() {
 				os.Exit(1)
 			}
 
-			if newTag == "" {
-				newTag = tag
+			if len(newTags) == 0 {
+				newTags = append(newTags, tag)
 			}
 
-			log.Info(ctx, fmt.Sprintf("Indexing %s:%s and pushing with tag %s to %s", repo, tag, newTag, registry))
+			log.Info(ctx, fmt.Sprintf("Indexing %s:%s and pushing with tags %s to %s", repo, tag, newTags, registry))
 
-			_, err = indexAndPush(ctx, repo, tag, newTag, registry, auth)
+			_, err = indexAndPush(ctx, repo, tag, newTags, registry, auth)
 			if err != nil {
 				os.Exit(1)
 			}
@@ -76,7 +76,7 @@ func main() {
 	}
 
 	rootCmd.Flags().StringVarP(&auth, "auth", "a", "", "Registry authentication token (usually USER:PASSWORD)")
-	rootCmd.Flags().StringVarP(&newTag, "new-tag", "t", "", "Push indexed image with this tag")
+	rootCmd.Flags().StringArrayVarP(&newTags, "new-tag", "t", nil, "Push indexed image with this tag")
 
 	if err := rootCmd.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)

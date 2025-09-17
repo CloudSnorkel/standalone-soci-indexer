@@ -37,7 +37,7 @@ const (
 	artifactsDbName    = "artifacts.db"
 )
 
-func indexAndPush(ctx context.Context, repo string, tag string, newTag string, registryUrl string, authToken string) (string, error) {
+func indexAndPush(ctx context.Context, repo string, tag string, newTags []string, registryUrl string, authToken string) (string, error) {
 	ctx = context.WithValue(ctx, "RegistryURL", registryUrl)
 
 	registry, err := registryutils.Init(ctx, registryUrl, authToken)
@@ -86,9 +86,16 @@ func indexAndPush(ctx context.Context, repo string, tag string, newTag string, r
 		}
 		ctx = context.WithValue(ctx, "SOCIIndexDigest", indexDescriptor.Digest.String())
 
-		err = registry.Push(ctx, sociStore, *indexDescriptor, repo, newTag)
+		err = registry.Push(ctx, sociStore, *indexDescriptor, repo)
 		if err != nil {
 			return logAndReturnError(ctx, PushFailedMessage, err)
+		}
+
+		for _, newTag := range newTags {
+			err = registry.Tag(ctx, *indexDescriptor, repo, newTag)
+			if err != nil {
+				return logAndReturnError(ctx, PushFailedMessage, err)
+			}
 		}
 
 		log.Info(ctx, BuildAndPushSuccessMessage)
