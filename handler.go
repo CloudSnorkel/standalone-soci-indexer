@@ -31,13 +31,14 @@ const (
 	BuildFailedMessage          = "SOCI index build error"
 	PushFailedMessage           = "SOCI index push error"
 	SkipPushOnEmptyIndexMessage = "Skipping pushing SOCI index as it does not contain any zTOCs"
+	PushOnEmptyIndexMessage     = "SOCI index does not contain any zTOCs. Re-tagging original image"
 	BuildAndPushSuccessMessage  = "Successfully built and pushed SOCI index"
 
 	artifactsStoreName = "store"
 	artifactsDbName    = "artifacts.db"
 )
 
-func indexAndPush(ctx context.Context, repo string, tag string, newTags []string, registryUrl string, authToken string) (string, error) {
+func indexAndPush(ctx context.Context, repo string, tag string, newTags []string, registryUrl string, authToken string, allowPushOnEmptyIndex bool) (string, error) {
 	ctx = context.WithValue(ctx, "RegistryURL", registryUrl)
 
 	registry, err := registryutils.Init(ctx, registryUrl, authToken)
@@ -79,6 +80,17 @@ func indexAndPush(ctx context.Context, repo string, tag string, newTags []string
 		indexDescriptor, err := buildIndex(ctx, dataDir, sociStore, image)
 		if err != nil {
 			if err.Error() == ErrEmptyIndex.Error() {
+				if allowPushOnEmptyIndex {
+					log.Warn(ctx, PushOnEmptyIndexMessage)
+
+					for _, newTag := range newTags {
+						err = registry.Tag(ctx, *desc, repo, newTag)
+						if err != nil {
+							return logAndReturnError(ctx, PushFailedMessage, err)
+						}
+					}
+					return PushOnEmptyIndexMessage, nil
+				}
 				log.Warn(ctx, SkipPushOnEmptyIndexMessage)
 				return SkipPushOnEmptyIndexMessage, nil
 			}
