@@ -20,8 +20,9 @@ var (
 )
 
 var (
-	auth    string
-	newTags []string
+	auth                   string
+	newTags                []string
+	allowPushOnEmptyIndex  bool
 )
 
 func parseImageDesc(desc string) (repo, tag, registry string, err error) {
@@ -68,7 +69,7 @@ func main() {
 
 			log.Info(ctx, fmt.Sprintf("Indexing %s:%s and pushing with tags %s to %s", repo, tag, newTags, registry))
 
-			_, err = indexAndPush(ctx, repo, tag, newTags, registry, auth)
+			_, err = indexAndPush(ctx, repo, tag, newTags, registry, auth, allowPushOnEmptyIndex)
 			if err != nil {
 				os.Exit(1)
 			}
@@ -77,6 +78,7 @@ func main() {
 
 	rootCmd.Flags().StringVarP(&auth, "auth", "a", "", "Registry authentication token (usually USER:PASSWORD)")
 	rootCmd.Flags().StringArrayVarP(&newTags, "new-tag", "t", nil, "Push indexed image with this tag")
+	rootCmd.Flags().BoolVar(&allowPushOnEmptyIndex, "allow-push-on-empty-index", false, "Allow pushing even if the index is empty")
 
 	if err := rootCmd.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
