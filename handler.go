@@ -28,10 +28,10 @@ var (
 )
 
 const (
-	BuildFailedMessage          = "SOCI index build error"
-	PushFailedMessage           = "SOCI index push error"
-	SkipPushOnEmptyIndexMessage = "Skipping pushing SOCI index as it does not contain any zTOCs"
-	BuildAndPushSuccessMessage  = "Successfully built and pushed SOCI index"
+	BuildFailedMessage         = "SOCI index build error"
+	PushFailedMessage          = "SOCI index push error"
+	PushOnEmptyIndexMessage    = "SOCI index does not contain any zTOCs. Re-tagging original image"
+	BuildAndPushSuccessMessage = "Successfully built and pushed SOCI index"
 
 	artifactsStoreName = "store"
 	artifactsDbName    = "artifacts.db"
@@ -79,8 +79,15 @@ func indexAndPush(ctx context.Context, repo string, tag string, newTags []string
 		indexDescriptor, err := buildIndex(ctx, dataDir, sociStore, image)
 		if err != nil {
 			if err.Error() == ErrEmptyIndex.Error() {
-				log.Warn(ctx, SkipPushOnEmptyIndexMessage)
-				return SkipPushOnEmptyIndexMessage, nil
+				log.Warn(ctx, PushOnEmptyIndexMessage)
+
+				for _, newTag := range newTags {
+					err = registry.Tag(ctx, *desc, repo, newTag)
+					if err != nil {
+						return logAndReturnError(ctx, PushFailedMessage, err)
+					}
+				}
+				return PushOnEmptyIndexMessage, nil
 			}
 			return logAndReturnError(ctx, BuildFailedMessage, err)
 		}
