@@ -30,7 +30,7 @@ var (
 const (
 	BuildFailedMessage         = "SOCI index build error"
 	PushFailedMessage          = "SOCI index push error"
-	PushOnEmptyIndexMessage    = "SOCI index does not contain any zTOCs. Re-tagging original image"
+	PushOnEmptyIndexMessage    = "SOCI index does not contain any zTOCs"
 	BuildAndPushSuccessMessage = "Successfully built and pushed SOCI index"
 
 	artifactsStoreName = "store"
@@ -81,10 +81,14 @@ func indexAndPush(ctx context.Context, repo string, tag string, newTags []string
 			if err.Error() == ErrEmptyIndex.Error() {
 				log.Warn(ctx, PushOnEmptyIndexMessage)
 
+				// tag when using --new-tag
+				// the user will be expecting those tags to exist whether or not we created an index
 				for _, newTag := range newTags {
-					err = registry.Tag(ctx, *desc, repo, newTag)
-					if err != nil {
-						return logAndReturnError(ctx, PushFailedMessage, err)
+					if newTag != tag {
+						err = registry.Tag(ctx, *desc, repo, newTag)
+						if err != nil {
+							return logAndReturnError(ctx, PushFailedMessage, err)
+						}
 					}
 				}
 				return PushOnEmptyIndexMessage, nil
