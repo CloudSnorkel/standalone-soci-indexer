@@ -28,3 +28,7 @@ The indexer will automatically use the provided environment AWS credentials to l
 ```bash
 ./standalone-soci-indexer docker.io/some-repo:latest --auth user:password
 ```
+
+## Other Options
+
+* soci-snapshotter added [standalone mode](https://github.com/awslabs/soci-snapshotter/blob/main/docs/cli-usage.md#standalone-mode) in March 2026.
