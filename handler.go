@@ -38,10 +38,25 @@ const (
 	artifactsDbName    = "artifacts.db"
 )
 
+type registryClient interface {
+	Pull(ctx context.Context, repositoryName string, sociStore *store.SociStore, imageReference string) (*ocispec.Descriptor, error)
+	Push(ctx context.Context, sociStore *store.SociStore, indexDesc ocispec.Descriptor, repositoryName string) error
+	Tag(ctx context.Context, indexDesc ocispec.Descriptor, repositoryName, tag string) error
+	HeadManifest(ctx context.Context, repositoryName string, reference string) (ocispec.Descriptor, error)
+	ValidateImageManifest(ctx context.Context, repositoryName string, digest string) error
+}
+
+var (
+	initRegistry = func(ctx context.Context, registryUrl string, authToken string) (registryClient, error) {
+		return registryutils.Init(ctx, registryUrl, authToken)
+	}
+	buildIndexFn = buildIndex
+)
+
 func indexAndPush(ctx context.Context, repo string, tag string, newTags []string, registryUrl string, authToken string) (string, error) {
 	ctx = context.WithValue(ctx, "RegistryURL", registryUrl)
 
-	registry, err := registryutils.Init(ctx, registryUrl, authToken)
+	registry, err := initRegistry(ctx, registryUrl, authToken)
 	if err != nil {
 		return logAndReturnError(ctx, "Remote registry initialization error", err)
 	}
@@ -76,7 +91,7 @@ func indexAndPush(ctx context.Context, repo string, tag string, newTags []string
 		Target: *pulledDesc,
 	}
 
-	indexDescriptor, err := buildIndex(ctx, dataDir, sociStore, image)
+	indexDescriptor, err := buildIndexFn(ctx, dataDir, sociStore, image)
 	if err != nil {
 		if err.Error() == ErrEmptyIndex.Error() {
 			log.Warn(ctx, PushOnEmptyIndexMessage)
@@ -111,7 +126,7 @@ func indexAndPush(ctx context.Context, repo string, tag string, newTags []string
 	return BuildAndPushSuccessMessage, nil
 }
 
-func resolveSourceImageDescriptor(ctx context.Context, registry *registryutils.Registry, repo string, reference string) (ocispec.Descriptor, error) {
+func resolveSourceImageDescriptor(ctx context.Context, registry registryClient, repo string, reference string) (ocispec.Descriptor, error) {
 	desc, err := registry.HeadManifest(ctx, repo, reference)
 	if err != nil {
 		return ocispec.Descriptor{}, err
@@ -165,7 +180,7 @@ func initSociStore(ctx context.Context, dataDir string) (*store.SociStore, error
 	// expects a store.Store, an interface that extends the oci.Store to provide support
 	// for garbage collection.
 	ociStore, err := oci.NewWithContext(ctx, path.Join(dataDir, artifactsStoreName))
-	return &store.SociStore{ociStore}, err
+	return &store.SociStore{Store: ociStore}, err
 }
 
 // Init a new instance of SOCI artifacts DB
