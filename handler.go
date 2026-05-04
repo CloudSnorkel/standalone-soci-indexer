@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/CloudSnorkel/standalone-soci-indexer/utils/log"
 	registryutils "github.com/CloudSnorkel/standalone-soci-indexer/utils/registry"
@@ -37,15 +38,30 @@ const (
 	artifactsDbName    = "artifacts.db"
 )
 
+type registryClient interface {
+	Pull(ctx context.Context, repositoryName string, sociStore *store.SociStore, imageReference string) (*ocispec.Descriptor, error)
+	Push(ctx context.Context, sociStore *store.SociStore, indexDesc ocispec.Descriptor, repositoryName string) error
+	Tag(ctx context.Context, indexDesc ocispec.Descriptor, repositoryName, tag string) error
+	HeadManifest(ctx context.Context, repositoryName string, reference string) (ocispec.Descriptor, error)
+	ValidateImageManifest(ctx context.Context, repositoryName string, digest string) error
+}
+
+var (
+	initRegistry = func(ctx context.Context, registryUrl string, authToken string) (registryClient, error) {
+		return registryutils.Init(ctx, registryUrl, authToken)
+	}
+	buildIndexFn = buildIndex
+)
+
 func indexAndPush(ctx context.Context, repo string, tag string, newTags []string, registryUrl string, authToken string) (string, error) {
 	ctx = context.WithValue(ctx, "RegistryURL", registryUrl)
 
-	registry, err := registryutils.Init(ctx, registryUrl, authToken)
+	registry, err := initRegistry(ctx, registryUrl, authToken)
 	if err != nil {
 		return logAndReturnError(ctx, "Remote registry initialization error", err)
 	}
 
-	digests, err := registry.GetImageDigests(ctx, repo, tag)
+	imageDesc, err := resolveSourceImageDescriptor(ctx, registry, repo, tag)
 	if err != nil {
 		log.Warn(ctx, fmt.Sprintf("Image manifest validation error: %v", err))
 		// Returning a non error to skip retries
@@ -63,55 +79,77 @@ func indexAndPush(ctx context.Context, repo string, tag string, newTags []string
 	if err != nil {
 		return logAndReturnError(ctx, "OCI storage initialization error", err)
 	}
+	ctx = context.WithValue(ctx, "ImageDigest", imageDesc.Digest.String())
 
-	for _, digest := range digests {
-		ctx := context.WithValue(ctx, "ImageDigest", digest)
-		desc, err := registry.Pull(ctx, repo, sociStore, digest)
-		if err != nil {
-			return logAndReturnError(ctx, "Image pull error", err)
-		}
+	pulledDesc, err := registry.Pull(ctx, repo, sociStore, tag)
+	if err != nil {
+		return logAndReturnError(ctx, "Image pull error", err)
+	}
 
-		image := images.Image{
-			Name:   repo + "@" + digest,
-			Target: *desc,
-		}
+	image := images.Image{
+		Name:   imageNameForReference(repo, tag),
+		Target: *pulledDesc,
+	}
 
-		indexDescriptor, err := buildIndex(ctx, dataDir, sociStore, image)
-		if err != nil {
-			if err.Error() == ErrEmptyIndex.Error() {
-				log.Warn(ctx, PushOnEmptyIndexMessage)
+	indexDescriptor, err := buildIndexFn(ctx, dataDir, sociStore, image)
+	if err != nil {
+		if err.Error() == ErrEmptyIndex.Error() {
+			log.Warn(ctx, PushOnEmptyIndexMessage)
 
-				// tag when using --new-tag
-				// the user will be expecting those tags to exist whether or not we created an index
-				for _, newTag := range newTags {
-					if newTag != tag {
-						err = registry.Tag(ctx, *desc, repo, newTag)
-						if err != nil {
-							return logAndReturnError(ctx, PushFailedMessage, err)
-						}
+			// tag when using --new-tag
+			// the user will be expecting those tags to exist whether or not we created an index
+			for _, newTag := range newTags {
+				if newTag != tag {
+					err = registry.Tag(ctx, *pulledDesc, repo, newTag)
+					if err != nil {
+						return logAndReturnError(ctx, PushFailedMessage, err)
 					}
 				}
-				return PushOnEmptyIndexMessage, nil
 			}
-			return logAndReturnError(ctx, BuildFailedMessage, err)
+			return PushOnEmptyIndexMessage, nil
 		}
-		ctx = context.WithValue(ctx, "SOCIIndexDigest", indexDescriptor.Digest.String())
+		return logAndReturnError(ctx, BuildFailedMessage, err)
+	}
+	ctx = context.WithValue(ctx, "SOCIIndexDigest", indexDescriptor.Digest.String())
 
-		err = registry.Push(ctx, sociStore, *indexDescriptor, repo)
+	err = registry.Push(ctx, sociStore, *indexDescriptor, repo)
+	if err != nil {
+		return logAndReturnError(ctx, PushFailedMessage, err)
+	}
+
+	for _, newTag := range newTags {
+		err = registry.Tag(ctx, *indexDescriptor, repo, newTag)
 		if err != nil {
 			return logAndReturnError(ctx, PushFailedMessage, err)
 		}
-
-		for _, newTag := range newTags {
-			err = registry.Tag(ctx, *indexDescriptor, repo, newTag)
-			if err != nil {
-				return logAndReturnError(ctx, PushFailedMessage, err)
-			}
-		}
-
-		log.Info(ctx, BuildAndPushSuccessMessage)
 	}
 	return BuildAndPushSuccessMessage, nil
+}
+
+func resolveSourceImageDescriptor(ctx context.Context, registry registryClient, repo string, reference string) (ocispec.Descriptor, error) {
+	desc, err := registry.HeadManifest(ctx, repo, reference)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+
+	switch desc.MediaType {
+	case registryutils.MediaTypeDockerManifest, registryutils.MediaTypeOCIManifest:
+		if err := registry.ValidateImageManifest(ctx, repo, desc.Digest.String()); err != nil {
+			return ocispec.Descriptor{}, err
+		}
+	case registryutils.MediaTypeDockerManifestList, registryutils.MediaTypeOCIIndexManifest:
+	default:
+		return ocispec.Descriptor{}, fmt.Errorf("unexpected manifest media type: %s", desc.MediaType)
+	}
+
+	return desc, nil
+}
+
+func imageNameForReference(repo string, reference string) string {
+	if strings.Contains(reference, ":") {
+		return repo + "@" + reference
+	}
+	return repo + ":" + reference
 }
 
 // Create a temp directory in /tmp or $TMPDIR
@@ -142,7 +180,7 @@ func initSociStore(ctx context.Context, dataDir string) (*store.SociStore, error
 	// expects a store.Store, an interface that extends the oci.Store to provide support
 	// for garbage collection.
 	ociStore, err := oci.NewWithContext(ctx, path.Join(dataDir, artifactsStoreName))
-	return &store.SociStore{ociStore}, err
+	return &store.SociStore{Store: ociStore}, err
 }
 
 // Init a new instance of SOCI artifacts DB
@@ -174,7 +212,12 @@ func buildIndex(ctx context.Context, dataDir string, sociStore *store.SociStore,
 		return nil, err
 	}
 
-	index, err := builder.Convert(ctx, image)
+	platforms, err := images.Platforms(ctx, containerdStore, image.Target)
+	if err != nil {
+		return nil, err
+	}
+
+	index, err := builder.Convert(ctx, image, soci.ConvertWithPlatforms(platforms...))
 	return index, err
 }
 
