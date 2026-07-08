@@ -121,10 +121,11 @@ jobs:
           fi
 
       - name: AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.INTEG_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
 
       - name: ECR Login
         uses: aws-actions/amazon-ecr-login@v2
