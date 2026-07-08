@@ -1,0 +1,206 @@
+# Integration tests for the standalone SOCI indexer.
+#
+# For every scenario they:
+#   1. Build the indexer from source.
+#   2. Build & push a source image to ECR (basic amd64, arm64, or multi-arch
+#      amd64+arm64), in a "replace tag" and a "new tag" variant.
+#   3. Run the freshly built indexer to generate & push a SOCI index.
+#   4. Launch a real AWS Fargate task from the indexed image and let the task
+#      fail itself unless Fargate served it via SOCI. It reads
+#      .Containers[0].Snapshotter from ${ECS_CONTAINER_METADATA_URI_V4}/task and
+#      exits non-zero when it isn't "soci"; the job checks the container exit code.
+#
+# You provide a working Fargate task definition (INTEG_TASK). The workflow clones
+# it into a throwaway revision, overriding only the image, the command, and the
+# CPU architecture -- ECS RunTask cannot override the image, so a revision is the
+# only way to point your task definition at the freshly built image. Everything
+# else (execution role, logging, cpu/memory, network mode) is inherited from it.
+#
+# Required repository secrets:
+#   INTEG_ROLE  - IAM role assumed via GitHub OIDC (trust this repo). Permissions:
+#                   ecr:  GetAuthorizationToken, BatchCheckLayerAvailability,
+#                         GetDownloadUrlForLayer, BatchGetImage, PutImage,
+#                         InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload,
+#                         BatchDeleteImage
+#                   ecs:  DescribeTaskDefinition, RegisterTaskDefinition,
+#                         DeregisterTaskDefinition, RunTask, StopTask, DescribeTasks
+#                   iam:  PassRole  (the execution/task roles in INTEG_TASK)
+#   INTEG_REPO    - ARN of an ECR repository, e.g.
+#                   arn:aws:ecr:us-east-1:123456789012:repository/soci-integ
+#   INTEG_TASK    - family or ARN of a Fargate task definition to clone. Its first
+#                   container is the one that gets the image/command override.
+#   INTEG_CLUSTER - ARN (or name) of the ECS cluster to run the task in.
+#   INTEG_NETWORK - awsvpcConfiguration for run-task (Fargate requires subnets +
+#                   security group at launch; they are not part of the task def).
+#                   Set it to the literal value, e.g.
+#                     awsvpcConfiguration={subnets=[subnet-abc],securityGroups=[sg-123],assignPublicIp=ENABLED}
+
+name: integration tests
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: integ-tests
+  cancel-in-progress: false
+
+env:
+  FARGATE_PLATFORM_VERSION: "1.4.0"
+
+jobs:
+  build:
+    name: Build indexer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -qy zlib1g-dev
+      - run: CGO_ENABLED=1 go build -o soci-indexer .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: soci-indexer
+          path: soci-indexer
+          retention-days: 1
+
+  integ:
+    name: ${{ matrix.name }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # for OIDC role assumption
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: basic-replace
+            platforms: linux/amd64
+            task_arch: X86_64
+            new_tag: false
+          - name: basic-newtag
+            platforms: linux/amd64
+            task_arch: X86_64
+            new_tag: true
+          - name: arm64-replace
+            platforms: linux/arm64
+            task_arch: ARM64
+            new_tag: false
+          - name: arm64-newtag
+            platforms: linux/arm64
+            task_arch: ARM64
+            new_tag: true
+          - name: multi-replace
+            platforms: linux/amd64,linux/arm64
+            task_arch: X86_64
+            new_tag: false
+          - name: multi-newtag
+            platforms: linux/amd64,linux/arm64
+            task_arch: X86_64
+            new_tag: true
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: soci-indexer
+
+      - name: Plan
+        run: |
+          set -euo pipefail
+          ARN='${{ secrets.INTEG_REPO }}'
+          if [ -z "$ARN" ]; then echo "INTEG_REPO secret is not set" >&2; exit 1; fi
+          BASE="integ-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.name }}"
+          echo "AWS_REGION=$(echo "$ARN" | cut -d: -f4)" >> "$GITHUB_ENV"
+          echo "REGISTRY=$(echo "$ARN" | cut -d: -f5).dkr.ecr.$(echo "$ARN" | cut -d: -f4).amazonaws.com" >> "$GITHUB_ENV"
+          echo "REPO_NAME=${ARN##*repository/}" >> "$GITHUB_ENV"
+          echo "SRC_TAG=${BASE}-src" >> "$GITHUB_ENV"
+          if [ "${{ matrix.new_tag }}" = "true" ]; then
+            echo "IDX_TAG=${BASE}-idx" >> "$GITHUB_ENV"
+          else
+            echo "IDX_TAG=${BASE}-src" >> "$GITHUB_ENV"
+          fi
+
+      - name: AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.INTEG_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: ECR Login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build source image
+        run: |
+          set -euxo pipefail
+          CTX=$(mktemp -d)
+          # Large, incompressible layer so SOCI actually produces zTOCs.
+          head -c 50M /dev/urandom > "$CTX/payload.bin"
+          printf 'FROM public.ecr.aws/docker/library/alpine:3.20\nCOPY payload.bin /payload.bin\n' > "$CTX/Dockerfile"
+          docker buildx build --platform "${{ matrix.platforms }}" --provenance=false \
+            -t "$REGISTRY/$REPO_NAME:$SRC_TAG" --push "$CTX"
+
+      - name: Generate SOCI
+        run: |
+          set -euxo pipefail
+          chmod +x ./soci-indexer
+          if [ "${{ matrix.new_tag }}" = "true" ]; then
+            ./soci-indexer "$REGISTRY/$REPO_NAME:$SRC_TAG" -t "$IDX_TAG"   # push under a new tag
+          else
+            ./soci-indexer "$REGISTRY/$REPO_NAME:$SRC_TAG"                 # replace the tag in place
+          fi
+
+      - name: Test SOCI
+        run: |
+          set -euo pipefail
+
+          # Clone the provided task definition, overriding only image, command and arch.
+          # The container fails itself unless it was lazy-loaded via the soci snapshotter.
+          CMD='M=$(wget -qO- "$ECS_CONTAINER_METADATA_URI_V4/task"); echo "$M"; echo "$M" | grep -q "\"Snapshotter\":\"soci\""'
+          TD_ARN=$(aws ecs describe-task-definition --task-definition '${{ secrets.INTEG_TASK }}' \
+            --query taskDefinition | jq \
+            --arg image "$REGISTRY/$REPO_NAME:$IDX_TAG" --arg cmd "$CMD" --arg arch "${{ matrix.task_arch }}" '
+              .containerDefinitions[0].image = $image
+              | .containerDefinitions[0].command = ["sh","-c",$cmd]
+              | .runtimePlatform.cpuArchitecture = $arch
+              | .runtimePlatform.operatingSystemFamily = (.runtimePlatform.operatingSystemFamily // "LINUX")
+              | {family,taskRoleArn,executionRoleArn,networkMode,containerDefinitions,volumes,
+                 placementConstraints,requiresCompatibilities,cpu,memory,runtimePlatform,ephemeralStorage}
+              | with_entries(select(.value != null))' > taskdef.json && \
+            aws ecs register-task-definition --cli-input-json file://taskdef.json \
+              --tags key=managed-by,value=soci-integ-tests \
+              --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "TD_ARN=$TD_ARN" >> "$GITHUB_ENV"
+
+          CLUSTER='${{ secrets.INTEG_CLUSTER }}'
+          TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TD_ARN" \
+            --launch-type FARGATE --platform-version "$FARGATE_PLATFORM_VERSION" --count 1 \
+            --network-configuration '${{ secrets.INTEG_NETWORK }}' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "TASK_ARN=$TASK_ARN" >> "$GITHUB_ENV"
+          echo "Started $TASK_ARN, waiting for it to stop..."
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
+          aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].{lastStatus:lastStatus,stopCode:stopCode,stoppedReason:stoppedReason,containers:containers[].{exitCode:exitCode,reason:reason}}'
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT" = "0" ]; then
+            echo "✅ Fargate served $IDX_TAG via SOCI"
+          else
+            echo "❌ Task did not confirm SOCI for $IDX_TAG (container exit code: $EXIT)" >&2
+            exit 1
+          fi
+
+      - name: Clean up
+        if: always()
+        run: |
+          set +e
+          [ -n "${TASK_ARN:-}" ] && aws ecs stop-task --cluster '${{ secrets.INTEG_CLUSTER }}' --task "$TASK_ARN" >/dev/null 2>&1
+          [ -n "${TD_ARN:-}" ] && aws ecs deregister-task-definition --task-definition "$TD_ARN" >/dev/null 2>&1
+          aws ecr batch-delete-image --region "$AWS_REGION" --repository-name "$REPO_NAME" \
+            --image-ids imageTag="$SRC_TAG" imageTag="$IDX_TAG" >/dev/null 2>&1
+          true
