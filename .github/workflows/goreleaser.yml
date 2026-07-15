@@ -3,6 +3,8 @@ name: goreleaser
 on:
   pull_request:
   push:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -34,7 +36,7 @@ jobs:
           
           mkdir /tmp/zlib
           cd /tmp/zlib
-          wget https://www.zlib.net/current/zlib.tar.gz
+          wget --tries=10 --retry-on-http-error=415,429,500,502,503,504 --waitretry=30 --continue https://www.zlib.net/current/zlib.tar.gz
           tar xvf zlib.tar.gz
           cd zlib-*          
           CC=aarch64-linux-gnu-gcc AR=aarch64-linux-gnu-ar CHOST=arm64 ./configure --static
